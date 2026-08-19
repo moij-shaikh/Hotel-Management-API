@@ -1,7 +1,5 @@
 from fastapi import FastAPI
-
+from routers import users
 app=FastAPI(debug=True,version="1")
 
-@app.get("/")
-def show():
-    return "ok requirement"
+app.include_router(users.router)
