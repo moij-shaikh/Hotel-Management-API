@@ -8,7 +8,7 @@ def send_email(url,token):
     msg["To"]=url
     msg["Subject"]="Verification From Hotel API"
     msg.add_alternative(f"""
-<a href='http://127.0.0.1:8000/user/auth/verification?token={token}'>Click </a>
+<a href='http://127.0.0.1:8000/user/auth/verify?token={token}'>Click </a>
 """,subtype="html")
 
     with smtplib.SMTP_SSL("smtp.gmail.com",465) as smtp:
