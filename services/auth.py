@@ -39,6 +39,9 @@ async def get_token_payload(token:str=Depends(get_jwt_token),db:AsyncSession=Dep
     try:
         payload=jwt.decode(token,JWT_SECRET_KEY,algorithms=[JWT_ALGO])
         user_id=int(payload.get("sub"))
+        is_token_blocked=redis_id=redis.get(f"blocked_token_id:{payload.get("token_id")}")
+        if is_token_blocked:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,detail="Wrong Credentials Try again Later.")
         user= await db.get(User,user_id)
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="User Not Found")

@@ -14,4 +14,14 @@ def send_email(url,token):
     with smtplib.SMTP_SSL("smtp.gmail.com",465) as smtp:
         smtp.login(Email_name,Email_pass)
         smtp.send_message(msg)
-        
+
+
+def send_opt_email(email,otp):
+    msg=EmailMessage()
+    msg["From"]=Email_name
+    msg["To"]=email
+    msg["Subject"]="Hotel API OTP"
+    msg.set_content(f"If you have not requested this opt, Please secure your account someone else made have access.\n OTP: {otp}")
+    with smtplib.SMTP_SSL("smtp.google.com",465) as smtp:
+        smtp.login(Email_name,Email_pass)
+        smtp.send_message(msg)

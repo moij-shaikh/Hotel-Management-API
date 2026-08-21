@@ -11,6 +11,7 @@ from sqlalchemy import select
 from redis_client import redis
 from services import auth , utils , email as my_email
 
+
 router=APIRouter(prefix="/user",tags=["User"])
 
 @router.post("/register")
@@ -88,7 +89,7 @@ async def user__refresh_token(user_id:str=Depends(auth.get_refresh_token)):
         "token_type":"bearer",
         "access_token":access_token
     }
-@router.post("/logout")
+@router.post("/auth/logout")
 async def user__logout(res:Response,req:Request,payload:dict=Depends()):
     redis_id=redis.get(f"blocked_token_id:{payload.get("token_id")}")
     cookie_token=req.cookies.get("refresh_token")
@@ -96,9 +97,79 @@ async def user__logout(res:Response,req:Request,payload:dict=Depends()):
     if not redis_id and not cookie_token:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail="you are logout already.")
     res.delete_cookie("refresh_token")
-    redis.set(f"blocked_token_id:{payload.get("token_id")}",'1',ex=60*60*8)
-
+    redis.set(f"blocked_token_id:{payload.get("token_id")}",'1',ex=60*8)
     return{
         "message":"You have been logout."
     }
-   
+
+@router.patch("/update/name")
+async def user__update_info(
+    payload:dict=Depends(auth.get_token_payload),
+    db:AsyncSession=Depends(get_db),
+    new_full_name:str=Form(...)
+    ):
+    try:
+        db_user=await db.get(User,int(payload.get("sub")))
+        if not db_user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="User Not Found.") 
+        db_user.full_name=new_full_name
+        await db.commit()
+        return {
+            "message":"Your Name was updated."
+        }
+    except SQLAlchemyError:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,detail="Database server is down.")
+
+
+@router.delete("/delete")
+async def user__delete(res:Response,req:Request,db:AsyncSession=Depends(get_db),payload:dict=Depends(auth.get_token_payload)):
+    try:
+        user_id=int(payload.get("sub"))
+        db_user= await db.get(User,user_id)
+        if not db_user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="User Not Found.")
+        await db.delete(db_user)
+        res.delete_cookie("refresh_token")
+        await db.commit()
+        return{
+            "message":"Your Account hade been deleted"
+        }
+    except SQLAlchemyError:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,detail="Database server is down.")
+
+@router.post("/reset/otp")
+async def user__password_reset_otp(
+    payload:dict=Depends(auth.get_token_payload),
+    user_name:str=Form(...),
+    password:str=Form(...),
+    db:AsyncSession=Depends(get_db)
+    ):
+    db_user=await db.scalar(select(User).where(User.full_name==user_name,User.id==int(payload.get("sub"))))
+    if not db_user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="No User Found.")
+    if not utils.pass_hasher.verify(password , db_user.password):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,detail="Wrong Password.")
+    otp=utils.generate_otp()
+    my_email.send_opt_email(db_user.email,otp)
+    redis.set(f"password_reset_otp:{otp}",payload.get("sub"),ex=60*10)
+    return{
+        "message":"Email was sended."
+    }
+
+@router.post("/reset/password")
+async def user__password_reset(payload:dict=Depends(auth.get_token_payload),db:AsyncSession=Depends(get_db),otp:str=Form(...),new_pass:str=Form(...)):
+    db_user= await db.get(User,int(payload.get("sub")))
+    if not db_user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="No User Found.")
+    redis_otp=redis.get(f"password_reset_otp:{otp}")
+    if not redis_otp:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,detail="Invalid Or expired OTP try again later.")
+    db_user.password=new_pass
+    try:
+        db.commit()
+        return{
+            "message":"Your new password is set."
+        }
+    except SQLAlchemyError:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,detail="Database server is down.")
+ 
