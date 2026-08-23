@@ -90,7 +90,7 @@ async def user__refresh_token(user_id:str=Depends(auth.get_refresh_token)):
         "access_token":access_token
     }
 @router.post("/auth/logout")
-async def user__logout(res:Response,req:Request,payload:dict=Depends()):
+async def user__logout(res:Response,req:Request,payload:dict=Depends(auth.get_token_payload)):
     redis_id=redis.get(f"blocked_token_id:{payload.get("token_id")}")
     cookie_token=req.cookies.get("refresh_token")
 

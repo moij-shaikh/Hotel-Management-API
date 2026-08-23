@@ -8,7 +8,6 @@ from datetime import datetime , timedelta , timezone
 from database.database import get_db
 from database.models import User
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.exc import SQLAlchemyErrors
 # from sqlalchemy import select
 
 get_jwt_token=OAuth2PasswordBearer(tokenUrl="/user/login")

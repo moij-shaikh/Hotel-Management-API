@@ -1,0 +1,7 @@
+2026-08-23 13:07:16,642 DEBUG cached_room_list: <class 'NoneType'> type
+2026-08-23 13:33:45,585 DEBUG cached_room_list: <class 'NoneType'> type
+2026-08-23 13:34:16,927 DEBUG cached_room_list: <class 'NoneType'> type
+2026-08-23 13:34:50,706 DEBUG cached_room_list: <class 'NoneType'> type
+2026-08-23 13:34:50,770 DEBUG display_room_list: <class 'list'> type
+2026-08-23 13:34:55,052 DEBUG cached_room_list: <class 'str'> type
+2026-08-23 13:34:55,052 DEBUG display_room_list: <class 'list'> type
