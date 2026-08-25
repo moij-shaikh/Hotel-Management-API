@@ -55,7 +55,7 @@ async def get_refresh_token(refresh_token:str=Cookie(),db:AsyncSession=Depends(g
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,detail="Wrong or invalid credential. ")
     try:
         payload=jwt.decode(refresh_token,JWT_SECRET_KEY,algorithms=[JWT_ALGO])
-        token_id=payload.get(f"refresh_token:{payload.get("token_id")}")
+        token_id=redis.get(f"refresh_token:{payload.get("token_id")}")
         if not token_id:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,detail="Expired or invalid credentials try again later.")
         user_id=int(payload.get("sub"))

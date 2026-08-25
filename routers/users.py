@@ -73,9 +73,9 @@ async def user__login(res:Response,form_data:OAuth2PasswordRequestForm=Depends()
     if not user.is_verified:
         return "token"
     access_token=auth.make_jwt_access_token(user.id,"user")
-    refresh_token=auth.make_jwt_refresh_token(user.id,"user")
-    print(refresh_token["id"])
-    redis.set(f"refresh_token:{refresh_token["id"]}",user.id,ex=60*60*24*10)
+    refresh_token_set=auth.make_jwt_refresh_token(user.id,"user")
+    refresh_token=refresh_token_set["token"]
+    redis.set(f"refresh_token:{refresh_token_set["id"]}",user.id,ex=60*60*24*10)
     res.set_cookie(key="refresh_token",value=refresh_token,samesite="strict",path="/user/auth",httponly=True,max_age=60*30*24*10)
     return{
         "token_type":"bearer",
@@ -89,6 +89,7 @@ async def user__refresh_token(user_id:str=Depends(auth.get_refresh_token)):
         "token_type":"bearer",
         "access_token":access_token
     }
+
 @router.post("/auth/logout")
 async def user__logout(res:Response,req:Request,payload:dict=Depends(auth.get_token_payload)):
     redis_id=redis.get(f"blocked_token_id:{payload.get("token_id")}")
@@ -150,10 +151,11 @@ async def user__password_reset_otp(
     if not utils.pass_hasher.verify(password , db_user.password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,detail="Wrong Password.")
     otp=utils.generate_otp()
-    my_email.send_opt_email(db_user.email,otp)
+    # my_email.send_opt_email(db_user.email,otp)
     redis.set(f"password_reset_otp:{otp}",payload.get("sub"),ex=60*10)
     return{
-        "message":"Email was sended."
+        "message":"Email was sended.",
+        "otp":otp
     }
 
 @router.post("/reset/password")
@@ -164,12 +166,14 @@ async def user__password_reset(payload:dict=Depends(auth.get_token_payload),db:A
     redis_otp=redis.get(f"password_reset_otp:{otp}")
     if not redis_otp:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,detail="Invalid Or expired OTP try again later.")
-    db_user.password=new_pass
+    db_user.password=utils.pass_hasher.hash(new_pass)
     try:
-        db.commit()
+        await db.commit()
         return{
             "message":"Your new password is set."
         }
     except SQLAlchemyError:
+        await db.rollback()
+        
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,detail="Database server is down.")
  

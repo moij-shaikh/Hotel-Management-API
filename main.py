@@ -1,7 +1,8 @@
 from fastapi import FastAPI
-from routers import users , rooms
+from routers import users , rooms , admin
 app=FastAPI(debug=True,version="1")
 import logger
 
 app.include_router(users.router)
 app.include_router(rooms.router)
+app.include_router(admin.router)
