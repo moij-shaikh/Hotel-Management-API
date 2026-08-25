@@ -2,7 +2,7 @@ from fastapi import APIRouter , Depends, HTTPException , status
 from fastapi import Form , Query , Path , Response , Request
 
 from database.database import get_db
-from database.models import Room , RoomBooking ,Payment,BookingExtension
+from database.models import Room , RoomBooking ,Payment,BookingExtension ,User
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import select 
@@ -183,7 +183,7 @@ async def admin__handle_payment(id:int,update_data:UpdatePayment,db:AsyncSession
             "user_id":db_booking.user_id,
             "room_id":db_booking.room_id,
             "booking_id":db_booking.id,
-            "payment_status":db_booking.payment.payment_status,
+            "payment_status":db_booking.payment.payment_status.value,
             "amount_paid":db_booking.payment.amount_paid,
             "total_amount":db_booking.payment.total_amount,
             "extensions":[
@@ -205,6 +205,10 @@ async def admin__handle_payment(id:int,update_data:UpdatePayment,db:AsyncSession
 @router.get("/bookings")
 async def admin__get_bookings(db:AsyncSession=Depends(get_db)):
     db_bookings= await db.scalars(select(RoomBooking).options(selectinload(RoomBooking.payment)))
+    data_list=db_bookings.all()
+    if not data_list:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="No Data Available .")
+
     display_list=[
         {
             "user_id":i.user_id,
@@ -216,7 +220,152 @@ async def admin__get_bookings(db:AsyncSession=Depends(get_db)):
             "check_out_date":i.check_out_date,
             "grand_total":i.payment.grand_total,
             "amount_paid":i.payment.amount_paid,
-
         }
-        for i in db_bookings.all()
+        for i in data_list
     ]
+    return display_list
+
+@router.get("/bookings/{id}")
+async def admin__get_booking_ById(id:int,db:AsyncSession=Depends(get_db)):
+    db_bookings= await db.scalar(select(RoomBooking).where(RoomBooking.id==id).options(selectinload(RoomBooking.payment)))
+    if not db_bookings:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="No Data Available .")
+    display_list={
+            "user_id":db_bookings.user_id,
+            "room_id":db_bookings.room_id,
+            "booking_id":db_bookings.id,
+            "status":db_bookings.booking_status.value,
+            "booked_at":db_bookings.created_at,
+            "check_in_date":db_bookings.check_in_date,
+            "check_out_date":db_bookings.check_out_date,
+            "grand_total":db_bookings.payment.grand_total,
+            "amount_paid":db_bookings.payment.amount_paid,
+        }
+        
+    return display_list
+
+@router.post("/check-in/{id}")
+async def admin__check_in(id:int,db:AsyncSession=Depends(get_db)):
+    booking= await db.scalar(select(RoomBooking).where(RoomBooking.id==id).with_for_update().options(selectinload(RoomBooking.payment)))
+    if not booking:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="No Booking Found .")
+    if booking.booking_status==BookingStatus.CANCELLED:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail="Booking was cancelled.")
+    if  booking.booking_status==BookingStatus.CHECKED_OUT:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail="Guest was already checkout.")
+    if  booking.booking_status==BookingStatus.CHECKED_IN:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail="Guest was already check-in.")
+    if booking.payment.payment_status == PaymentStatus.UNPAID:
+        raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED,detail="Please First pay fees.")
+    booking.booking_status=BookingStatus.CHECKED_IN
+    try:
+        await db.commit()
+        display={
+            "user_id":booking.user_id,
+            "room_id":booking.room_id,
+            "booking_id":booking.id,
+            "status":booking.booking_status.value,
+            "booked_at":booking.created_at,
+            "check_in_date":booking.check_in_date,
+            "check_out_date":booking.check_out_date,
+            "grand_total":booking.payment.grand_total,
+            "amount_paid":booking.payment.amount_paid,
+        }
+        return display
+    except SQLAlchemyError:
+            await db.rollback()
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,detail="Database is down.")
+    
+
+@router.post("/check-out/{id}")
+async def admin__check_out(id:int,db:AsyncSession=Depends(get_db)):
+    booking= await db.scalar(select(RoomBooking).with_for_update().where(RoomBooking.id==id)
+                             .options(selectinload(RoomBooking.payment),
+                              selectinload(RoomBooking.room))
+                              )
+    if not booking:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="No Booking Found .")
+    if booking.payment.payment_status==PaymentStatus.UNPAID or booking.payment.payment_status==PaymentStatus.PARTIAL:
+        remaining= booking.payment.grand_total - booking.payment.amount_paid
+        raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED,detail=f"Please pay the bill. Remaining: {remaining} Out of {booking.payment.grand_total}")
+    if booking.check_out_date > datetime.now(timezone.utc):
+        time_left=booking.check_out_date - datetime.now(timezone.utc)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail=f"Time left before decided checkout date {time_left}")
+    if booking.booking_status != BookingStatus.CHECKED_IN:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,detail="Guest Did not check-in")
+    booking.booking_status=BookingStatus.CHECKED_OUT
+    booking.room.room_status=RoomStatus.CLEANING
+    try:
+        await db.commit()
+        return{
+            "message":"Check-out was successful"
+        }
+    except SQLAlchemyError:
+            await db.rollback()
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,detail="Database is down.")
+
+
+@router.get("/user")
+async def admin__get_users(db:AsyncSession=Depends(get_db)):
+    db_users= await db.scalars(select(User))
+    db_list=db_users.all()
+    if not db_list:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="No data found.")
+    display_list=[
+        {
+            "id":user.id,
+            "full_name":user.full_name,
+            "email":user.email,
+            "phone_number":user.phone_number,
+            "is_blocked":user.is_blocked,
+            "is_verified":user.is_verified
+        }
+        for user in db_list
+    ]
+    return display_list
+
+
+@router.get("/user/{id}")
+async def admin__get_user_ById(id:int,db:AsyncSession=Depends(get_db)):
+    user= await db.get(User,id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="No data found.")
+    display={
+            "id":user.id,
+            "full_name":user.full_name,
+            "email":user.email,
+            "phone_number":user.phone_number,
+            "is_blocked":user.is_blocked,
+            "is_verified":user.is_verified
+        }
+        
+    return display
+
+@router.patch("/user/{id}/block")
+async def admin__block_user(id:int=Query(gt=0),db:AsyncSession=Depends(get_db)):
+    user= await db.get(User,id)
+    if not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="No data found.")
+    if user.is_blocked:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,detail="User is already Blocked")
+    try:
+        user.is_blocked=True
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,detail="Database is down.")
+
+
+@router.patch("/user/{id}/unblock")
+async def admin__unblock_user(id:int=Query(gt=0),db:AsyncSession=Depends(get_db)):
+    user= await db.get(User,id)
+    if not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="No data found.")
+    if not user.is_blocked:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,detail="User is already Unblocked")
+    try:
+        user.is_blocked=False
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,detail="Database is down.")

@@ -1,8 +1,8 @@
-"""Updated the Database added the enums and also seperated the payment and extended room booking from main table
+"""fixed the spelling and updated the db
 
-Revision ID: 47a9a3edec4d
+Revision ID: 227fb4d46cb4
 Revises: 
-Create Date: 2026-08-24 13:22:40.875164
+Create Date: 2026-08-25 21:12:56.880087
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = '47a9a3edec4d'
+revision: str = '227fb4d46cb4'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -42,8 +42,9 @@ def upgrade() -> None:
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('user_id', sa.Integer(), nullable=False),
     sa.Column('room_id', sa.Integer(), nullable=False),
-    sa.Column('booked_at', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('checkout_at', sa.DateTime(timezone=True), nullable=False),
+    sa.Column('check_in_date', sa.DateTime(timezone=True), nullable=False),
+    sa.Column('check_out_date', sa.DateTime(timezone=True), nullable=False),
+    sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('booking_status', sa.Enum('RESERVED', 'CHECKED_IN', 'CHECKED_OUT', 'CANCELLED', name='bookingstatus'), nullable=False),
     sa.ForeignKeyConstraint(['room_id'], ['rooms.id'], ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
@@ -59,11 +60,11 @@ def upgrade() -> None:
     op.create_table('payments',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('room_book_id', sa.Integer(), nullable=False),
-    sa.Column('payment_status', sa.Enum('PAID', 'UNPAID', 'EXTENDED', name='paymentstatus'), nullable=False),
+    sa.Column('payment_status', sa.Enum('PAID', 'UNPAID', 'PARTIAL', name='paymentstatus'), nullable=False),
     sa.Column('total_amount', sa.Integer(), nullable=False),
     sa.Column('extended_room_amount', sa.Integer(), nullable=False),
     sa.Column('grand_total', sa.Integer(), nullable=False),
-    sa.Column('amount_payed', sa.Integer(), nullable=False),
+    sa.Column('amount_paid', sa.Integer(), nullable=False),
     sa.ForeignKeyConstraint(['room_book_id'], ['room_bookings.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )
