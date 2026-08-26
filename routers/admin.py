@@ -33,8 +33,8 @@ async def admin__login(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,detail="You can not access this.")
     access_token=admin_auth.generate_admin_access_token(admin.username)
     refresh_token=admin_auth.generate_admin_refresh_token(admin.username)
-    res.set_cookie(key="admin_refresh_token",value=refresh_token,samesite='strict',path="/admin",httponly=True, max_age=60*60*20)
-    redis.set(f"admin_refresh_token:{refresh_token}",str(admin.username),ex=60*60*20)
+    res.set_cookie(key="admin_refresh_token",value=refresh_token,samesite='strict',path="/admin",httponly=True, max_age=60*60*24*20)
+    redis.set(f"admin_refresh_token:{refresh_token}",str(admin.username),ex=60*60*24*20)
     return {
         "token_type":"bearer",
         "access_token":access_token

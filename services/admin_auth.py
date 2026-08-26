@@ -54,17 +54,13 @@ async def admin_check_refresh_token(req:Request,res:Response):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,detail="Login First.")
     redis_token=redis.get(f"admin_refresh_token:{refresh_token}")
     if not redis_token or redis_token is None:
+        res.delete_cookie("admin_refresh_token")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,detail="Login First.")
     try:
         payload=jwt.decode(refresh_token,JWT_SECRET_KEY,algorithms=[JWT_ALGO])
         role=payload.get("role")
         if role != "admin":
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,detail="You are unauthorized for this operation.")
-        if payload.get("exp") - datetime.now(timezone.utc) < timedelta(days=1):
-            redis.delete(f"admin_refresh_token:{refresh_token}")
-            new_refresh_token =generate_admin_refresh_token(payload.get("sub"))
-            res.set_cookie(key="admin_refresh_token",value=new_refresh_token,httponly=True,samesite="strict",max_age=60*60*20,path="/admin")
-            redis.set(f"admin_refresh_token:{refresh_token}",payload.get('sub'),ex=60*60*20)
         access_token=generate_admin_access_token(payload.get("sub"))
         return access_token
     except JWTError:
