@@ -61,3 +61,8 @@ class BookingExtension(Base):
 
 
 
+class Admin(Base):
+    __tablename__="admin"
+    username:Mapped[str]=mapped_column(primary_key=True)
+    password:Mapped[str]
+    email:Mapped[str]
