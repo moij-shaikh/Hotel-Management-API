@@ -6,10 +6,7 @@ from  uuid import uuid4
 from config import JWT_ALGO , JWT_SECRET_KEY
 from redis_client import redis
 
-from database.database import get_db
-from database.models import Admin
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.exc import SQLAlchemyError
+
 
 
 def generate_admin_access_token(sub):

@@ -1,5 +1,5 @@
 from fastapi import APIRouter , Depends, HTTPException , status 
-from fastapi import Form , Query , Path , Response , Request
+from fastapi import Form , Query  , Response , Request
 from fastapi.security import OAuth2PasswordRequestForm
 
 from database.database import get_db
@@ -16,6 +16,7 @@ router=APIRouter(prefix="/user",tags=["User"])
 
 @router.post("/register")
 async def user__register(
+    req:Request,
     full_name:str=Form(...),
     email:str=Form(...),
     password:str=Form(...,min_length=8),
@@ -29,18 +30,17 @@ async def user__register(
         await db.refresh(user)
 
         email_token=utils.generate_email_token()
-        # my_email.send_email(user.email,email_token)
+        job = await req.app.state.arq.enqueue_job("send_email",user.email,email_token)
         redis.set(f"email_token_verify:{email_token}",str(user.id),ex=60*10)
 
         return {
-            "message":"Email was send to your email please verify it ",
-            "token":email_token
+            "message":"Email was send to your email please verify it "
         }
     except SQLAlchemyError:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,detail="Database is Down Try again later.")
 
 
-@router.post('/auth/verify')
+@router.get('/auth/verify')
 async def user__email_verify(token:str=Query(...),db:AsyncSession=Depends(get_db)):
     redis__user_id=redis.get(f"email_token_verify:{token}")
     if redis__user_id is None:
@@ -140,6 +140,7 @@ async def user__delete(res:Response,req:Request,db:AsyncSession=Depends(get_db),
 
 @router.post("/reset/otp")
 async def user__password_reset_otp(
+    req:Request,
     payload:dict=Depends(auth.get_token_payload),
     user_name:str=Form(...),
     password:str=Form(...),
@@ -151,11 +152,10 @@ async def user__password_reset_otp(
     if not utils.pass_hasher.verify(password , db_user.password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,detail="Wrong Password.")
     otp=utils.generate_otp()
-    # my_email.send_opt_email(db_user.email,otp)
+    job = await req.app.state.arq.enqueue_job("send_password_otp",db_user.email,otp)
     redis.set(f"password_reset_otp:{otp}",payload.get("sub"),ex=60*10)
     return{
-        "message":"Email was sended.",
-        "otp":otp
+        "message":"Email was sended."
     }
 
 @router.post("/reset/password")

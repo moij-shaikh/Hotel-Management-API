@@ -11,5 +11,6 @@ class DisplayRoom(BaseModel):
 class UpdateRoom(BaseModel):
     price:int | None=None
     room_type:RoomType|None = None
-class UpdatePayment:
+
+class UpdatePayment(BaseModel):
     amount:int | None = Field(default=None,gt=0)
