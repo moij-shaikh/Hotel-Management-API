@@ -18,10 +18,10 @@ from schemas.rooms import DisplayRoom
 from redis_client import redis
 from services import auth , utils , email as my_email
 
-router=APIRouter(prefix="/rooms",tags=["Room"])
+router=APIRouter()
 
 
-@router.get("/",response_model=list[DisplayRoom])
+@router.get("/room",response_model=list[DisplayRoom],tags=["Room"])
 async def room__show_all(db:AsyncSession=Depends(get_db)):
     cached_room_list=redis.get("cached_rooms_all")
     if cached_room_list is not None:
@@ -29,17 +29,49 @@ async def room__show_all(db:AsyncSession=Depends(get_db)):
         return display_room_list
     db_room_list= await db.scalars(select(Room))
     room_list=db_room_list.all()
-    display_room_list=[{"id":i.id,"room_type":i.room_type,"price":i.price,"available":i.is_available}for i in room_list]
+    if not room_list:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="No Rooms Found")
+    display_room_list=[
+        {"id":i.id,"room_type":i.room_type.value,"price":i.price,"status":i.room_status.value}for i in room_list]
     redis.set("cached_rooms_all",json.dumps(display_room_list),ex=60*60)
     return display_room_list
 
-@router.post("/book")
+@router.get("/room/{id}",tags=["Room"])
+async def room__show_ById(id:int,db:AsyncSession=Depends(get_db)):
+    cached_room=redis.get(f"cached_room:{id}")
+    if cached_room is not None :
+        room=json.loads(cached_room)
+        return room
+    db_room=await db.get(Room,id)
+    if not db_room:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="No Room Found")
+    display_room={
+        "id":db_room.id,
+        "room_type":db_room.room_type.value,
+        "price":db_room.price,
+        "status":db_room.room_status.value
+    }
+    redis.set(f"cached_room:{id}",json.dumps(display_room),ex=60*60)
+ 
+
+@router.get("/bookings",tags=["Bookings"])
+async def room__user_bookings(payload:dict=Depends(auth.get_token_payload),db:AsyncSession=Depends(get_db)):
+    db_rooms_booking= await db.scalars(select(RoomBooking).where(RoomBooking.user_id==int(payload.get("sub"))).options(selectinload(RoomBooking.room),selectinload(RoomBooking.payment)))
+    rooms_booking_list=db_rooms_booking.all()
+    if not rooms_booking_list:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="No Booking Found.")
+    display_list=[{ "id":i.id,"room number":i.room_id,"room type":i.room.room_type.value,"Current room price/day":i.room.price," Grand total":i.payment.grand_total,"check-in date":i.check_in_date,"checkout date":i.check_out_date} for i in rooms_booking_list]
+    return display_list
+
+
+
+@router.post("/bookings/{room_id}",tags=["Bookings"])
 async def room__book(
+    room_id:int,
     payload:dict=Depends(auth.get_token_payload),
-    room_id:int=Query(...),
     db:AsyncSession=Depends(get_db),
     check_in_date:datetime=Form(...),
-    days:int=Form(),
+    days:int=Form(gt=0),
     ):
     user_id=int(payload.get("sub"))
     try:
@@ -51,7 +83,7 @@ async def room__book(
         checkout_date=check_in_date + timedelta(days=days)
         existing= await db.scalar(select(RoomBooking).where(RoomBooking.room_id==room_id,RoomBooking.booking_status==BookingStatus.RESERVED,RoomBooking.check_in_date < checkout_date,RoomBooking.check_out_date > check_in_date).order_by(RoomBooking.check_out_date.desc()))
         if existing:
-         raise HTTPException(status_code=status.HTTP_409_CONFLICT,detail=f"Rooms are booked Try after {existing.check_out_date}")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT,detail=f"Rooms are booked Try after {existing.check_out_date}")
         
         total_price=room.price*days
         booking=RoomBooking(
@@ -77,17 +109,9 @@ async def room__book(
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,detail="Something Went Wrong with db.")
 
-@router.get("/bookings")
-async def room__user_bookings(payload:dict=Depends(auth.get_token_payload),db:AsyncSession=Depends(get_db)):
-    db_rooms_booking= await db.scalars(select(RoomBooking).where(RoomBooking.user_id==int(payload.get("sub"))).options(selectinload(RoomBooking.room)))
-    rooms_booking_list=db_rooms_booking.all()
-    if not rooms_booking_list:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="No Booking Found.")
-    display_list=[{ "id":i.id,"room number":i.room_id,"room type":i.room.room_type,"Current room price/day":i.room.price,"total price":i.total_price,"check-in date":i.check_in_date,"checkout date":i.check_out_date} for i in rooms_booking_list]
-    return display_list
 
-@router.delete("/cancel")
-async def room__booking_cancel(id:int=Query(...),payload:dict=Depends(auth.get_token_payload),db:AsyncSession=Depends(get_db)):
+@router.delete("/bookings/{id}",tags=["Bookings"])
+async def room__booking_cancel(id:int,payload:dict=Depends(auth.get_token_payload),db:AsyncSession=Depends(get_db)):
     try:
         user_id=int(payload.get("sub"))
         booking= await db.scalar(select(RoomBooking).where(RoomBooking.id == id , RoomBooking.user_id == user_id))
@@ -109,15 +133,15 @@ async def room__booking_cancel(id:int=Query(...),payload:dict=Depends(auth.get_t
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,detail="Something Went Wrong with db.")
  
 
-@router.patch("/extent")
+@router.patch("/bookings/{id}",tags=["Bookings"])
 async def room__extent(
     id:int,
-    days:int,
+    days:int=Query(gt=0),
     payload:dict=Depends(auth.get_token_payload),
     db:AsyncSession=Depends(get_db)
     ):
     user_id=int(payload.get("sub"))
-    db_room_booking= await db.scalar(select(RoomBooking).where(RoomBooking.id==id,RoomBooking.user_id==user_id).options(selectinload(RoomBooking.room,RoomBooking.payment)))
+    db_room_booking= await db.scalar(select(RoomBooking).where(RoomBooking.id==id,RoomBooking.user_id==user_id).options(selectinload(RoomBooking.room),selectinload(RoomBooking.payment)))
 
     if db_room_booking is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="No Booking Found.")
@@ -135,9 +159,9 @@ async def room__extent(
         RoomBooking.room_id==db_room_booking.room.id,
         RoomBooking.booking_status==BookingStatus.RESERVED, 
         RoomBooking.id != db_room_booking.id,
-        RoomBooking.check_out_date > new_check_out,
+        RoomBooking.check_in_date < new_check_out,
 
-        RoomBooking.check_in_date <= new_check_out
+        RoomBooking.check_out_date > db_room_booking.check_out_date
         ).order_by(RoomBooking.check_in_date.desc())
         )
     if existing:
@@ -146,6 +170,7 @@ async def room__extent(
     try:
         total_price=db_room_booking.room.price*days
         extent=BookingExtension(room_book_id=db_room_booking.id,checkout_date=new_check_out)
+        db_room_booking.check_out_date=new_check_out
         db_room_booking.payment.extended_room_amount = total_price
         db_room_booking.payment.grand_total += total_price
         db_room_booking.payment.payment_status=PaymentStatus.PARTIAL
@@ -158,4 +183,5 @@ async def room__extent(
             "Total Price":db_room_booking.total_price
         }
     except SQLAlchemyError:
+        await db.rollback()
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,detail="Something Went Wrong with db.")

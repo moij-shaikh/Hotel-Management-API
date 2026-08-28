@@ -13,13 +13,14 @@ from datetime import datetime  ,timezone
 from logger import admin_logger
 
 from schemas.enums import BookingStatus , RoomStatus ,PaymentStatus , RoomType
-from schemas.rooms import DisplayRoom , UpdateRoom ,UpdatePayment
+from schemas.rooms import DisplayRoom , UpdateRoom , DisplayRoomBooking
+from schemas.payment import UpdatePayment , Payment_History
 from redis_client import redis
 from services import admin_auth , utils , email as my_email
 
-router=APIRouter(prefix="/admin",tags=["Admin"])
+router=APIRouter(prefix="/admin")
 
-@router.post("/login")
+@router.post("/login",tags=["Admin"])
 async def admin__login(
     res:Response,
     form_data:OAuth2PasswordRequestForm=Depends(),
@@ -38,13 +39,15 @@ async def admin__login(
         "token_type":"bearer",
         "access_token":access_token
     }
-@router.post("/refresh")
+
+@router.post("/refresh",tags=["Admin"])
 async def admin__refresh_token(token:str=Depends(admin_auth.admin_check_refresh_token)):
     return{
         "token_type":"bearer",
         "access_token":token
     }
-@router.post("/logout")
+
+@router.post("/logout",tags=["Admin"])
 async def admin__logout(res:Response,req:Request,admin:dict=Depends(admin_auth.check_admin_access_token)):
     token_id=admin.get("token_id")
     redis.set(f"admin_token_block:{token_id}","1",ex=60*10)
@@ -54,14 +57,14 @@ async def admin__logout(res:Response,req:Request,admin:dict=Depends(admin_auth.c
     res.delete_cookie("admin_refresh_token")
     redis.delete(f"admin_refresh_token:{refresh_token}")
 
-@router.get("/room",response_model=list[DisplayRoom])
+@router.get("/room",response_model=list[DisplayRoom],tags=["Admin Room"])
 async def admin__show_rooms(db:AsyncSession=Depends(get_db),admin:dict=Depends(admin_auth.check_admin_access_token)):
     rooms=await db.scalars(select(Room))
     room_list=rooms.all()
     display_list=[{"id":i.id,"room_type":i.room_type.value,"price":i.price,"status":i.room_status.value} for i in room_list]
     return display_list
 
-@router.get("/room/{id}",response_model=DisplayRoom)
+@router.get("/room/{id}",response_model=DisplayRoom,tags=["Admin Room"])
 async def admin__show_room_Byid(id:int,db:AsyncSession=Depends(get_db),admin:dict=Depends(admin_auth.check_admin_access_token)):
     room= await db.get(Room,id)
     if not room:
@@ -75,7 +78,7 @@ async def admin__show_room_Byid(id:int,db:AsyncSession=Depends(get_db),admin:dic
     
     return display_room
 
-@router.post("/room")
+@router.post("/room",tags=["Admin Room"])
 async def admin__create_new_room(
     db:AsyncSession=Depends(get_db),
     room_type:RoomType=Form(...),
@@ -99,7 +102,7 @@ async def admin__create_new_room(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,detail="Database is down.")
 
 
-@router.patch("/room/{id}")
+@router.patch("/room/{id}",tags=["Admin Room"])
 async def admin__update_room(
     id:int,
     update_data:UpdateRoom,
@@ -122,7 +125,7 @@ async def admin__update_room(
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,detail="Database is down.")
 
-@router.patch("/room/{id}/status")
+@router.patch("/room/{id}/status",tags=["Admin Room"])
 async def admin__update_room_status(
     id:int,
     db:AsyncSession=Depends(get_db),
@@ -144,7 +147,7 @@ async def admin__update_room_status(
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,detail="Database is down.")
 
-@router.get("/payment")
+@router.get("/payment",response_model=list[Payment_History],tags=["Admin Payment"])
 async def admin__get_payment_history(db:AsyncSession=Depends(get_db),admin:dict=Depends(admin_auth.check_admin_access_token)):
     db_data = await db.scalars(select(RoomBooking).options(selectinload(RoomBooking.payment),selectinload(RoomBooking.room)))
     db_data_list=db_data.all()
@@ -168,7 +171,7 @@ async def admin__get_payment_history(db:AsyncSession=Depends(get_db),admin:dict=
     ]
     return display_list
 
-@router.get("/payment/{id}")
+@router.get("/payment/{id}",response_model=Payment_History,tags=["Admin Payment"])
 async def admin__get_payment_history_id(id:int,db:AsyncSession=Depends(get_db),admin:dict=Depends(admin_auth.check_admin_access_token)):
     db_history= await db.scalar(select(RoomBooking).where(RoomBooking.id == id).options(selectinload(RoomBooking.payment),selectinload(RoomBooking.room)))
     if not db_history:
@@ -188,7 +191,7 @@ async def admin__get_payment_history_id(id:int,db:AsyncSession=Depends(get_db),a
             }
     return display
 
-@router.post("/payment/{id}/pay")
+@router.post("/payment/{id}/pay",tags=["Admin Payment"])
 async def admin__handle_payment(id:int,update_data:UpdatePayment,db:AsyncSession=Depends(get_db),admin:dict=Depends(admin_auth.check_admin_access_token)):
     db_booking= await db.scalar(select(RoomBooking).where(RoomBooking.id==id).with_for_update()
                                 .options(
@@ -204,7 +207,6 @@ async def admin__handle_payment(id:int,update_data:UpdatePayment,db:AsyncSession
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail="Booking was already cancelled")
     if db_booking.payment.payment_status == PaymentStatus.PAID:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail="Payment is already done.")
-
 
     try:
         if update_data.amount is not None:
@@ -240,7 +242,7 @@ async def admin__handle_payment(id:int,update_data:UpdatePayment,db:AsyncSession
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,detail="Database is down.")
 
 
-@router.get("/bookings")
+@router.get("/bookings",response_model=list[DisplayRoomBooking],tags=["Admin Booking"])
 async def admin__get_bookings(db:AsyncSession=Depends(get_db),admin:dict=Depends(admin_auth.check_admin_access_token)):
     db_bookings= await db.scalars(select(RoomBooking).options(selectinload(RoomBooking.payment)))
     data_list=db_bookings.all()
@@ -263,7 +265,7 @@ async def admin__get_bookings(db:AsyncSession=Depends(get_db),admin:dict=Depends
     ]
     return display_list
 
-@router.get("/bookings/{id}")
+@router.get("/bookings/{id}",response_model=DisplayRoomBooking,tags=["Admin Booking"])
 async def admin__get_booking_ById(id:int,db:AsyncSession=Depends(get_db),admin:dict=Depends(admin_auth.check_admin_access_token)):
     db_bookings= await db.scalar(select(RoomBooking).where(RoomBooking.id==id).options(selectinload(RoomBooking.payment)))
     if not db_bookings:
@@ -282,7 +284,7 @@ async def admin__get_booking_ById(id:int,db:AsyncSession=Depends(get_db),admin:d
         
     return display_list
 
-@router.post("/check-in/{id}")
+@router.post("/check-in/{id}",response_model=DisplayRoomBooking,tags=["Admin Booking"])
 async def admin__check_in(id:int,db:AsyncSession=Depends(get_db),admin:dict=Depends(admin_auth.check_admin_access_token)):
     booking= await db.scalar(select(RoomBooking).where(RoomBooking.id==id).with_for_update().options(selectinload(RoomBooking.payment)))
     if not booking:
@@ -315,7 +317,7 @@ async def admin__check_in(id:int,db:AsyncSession=Depends(get_db),admin:dict=Depe
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,detail="Database is down.")
     
 
-@router.post("/check-out/{id}")
+@router.post("/check-out/{id}",tags=["Admin Booking"])
 async def admin__check_out(id:int,db:AsyncSession=Depends(get_db),admin:dict=Depends(admin_auth.check_admin_access_token)):
     booking= await db.scalar(select(RoomBooking).with_for_update().where(RoomBooking.id==id)
                              .options(selectinload(RoomBooking.payment),
@@ -343,7 +345,7 @@ async def admin__check_out(id:int,db:AsyncSession=Depends(get_db),admin:dict=Dep
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,detail="Database is down.")
 
 
-@router.get("/user")
+@router.get("/user",tags=["Admin User"])
 async def admin__get_users(db:AsyncSession=Depends(get_db),admin:dict=Depends(admin_auth.check_admin_access_token)):
     db_users= await db.scalars(select(User))
     db_list=db_users.all()
@@ -363,7 +365,7 @@ async def admin__get_users(db:AsyncSession=Depends(get_db),admin:dict=Depends(ad
     return display_list
 
 
-@router.get("/user/{id}")
+@router.get("/user/{id}",tags=["Admin User"])
 async def admin__get_user_ById(id:int,db:AsyncSession=Depends(get_db),admin:dict=Depends(admin_auth.check_admin_access_token)):
     user= await db.get(User,id)
     if not user:
@@ -379,7 +381,7 @@ async def admin__get_user_ById(id:int,db:AsyncSession=Depends(get_db),admin:dict
         
     return display
 
-@router.patch("/user/{id}/block")
+@router.patch("/user/{id}/block",tags=["Admin User"])
 async def admin__block_user(id:int=Path(gt=0),db:AsyncSession=Depends(get_db),admin:dict=Depends(admin_auth.check_admin_access_token)):
     user= await db.get(User,id)
     if not user:
@@ -389,12 +391,15 @@ async def admin__block_user(id:int=Path(gt=0),db:AsyncSession=Depends(get_db),ad
     try:
         user.is_blocked=True
         await db.commit()
+        return{
+            "message":f"{user.full_name} was successfully block"
+        }
     except SQLAlchemyError:
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,detail="Database is down.")
 
 
-@router.patch("/user/{id}/unblock")
+@router.patch("/user/{id}/unblock",tags=["Admin User"])
 async def admin__unblock_user(id:int=Path(gt=0),db:AsyncSession=Depends(get_db),admin:dict=Depends(admin_auth.check_admin_access_token)):
     user= await db.get(User,id)
     if not user:
@@ -404,6 +409,9 @@ async def admin__unblock_user(id:int=Path(gt=0),db:AsyncSession=Depends(get_db),
     try:
         user.is_blocked=False
         await db.commit()
+        return{
+                "message":f"{user.full_name} was successfully unblock"
+                }
     except SQLAlchemyError:
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,detail="Database is down.")

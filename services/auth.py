@@ -1,7 +1,7 @@
 import secrets
 from jose import jwt, JWTError
 from config import JWT_ALGO , JWT_SECRET_KEY
-from fastapi import Cookie , HTTPException , status, Depends
+from fastapi import Request , HTTPException , status, Depends
 from fastapi.security import OAuth2PasswordBearer
 from redis_client import redis
 from datetime import datetime , timedelta , timezone
@@ -10,7 +10,7 @@ from database.models import User
 from sqlalchemy.ext.asyncio import AsyncSession
 # from sqlalchemy import select
 
-get_jwt_token=OAuth2PasswordBearer(tokenUrl="/user/login")
+get_user_jwt_token=OAuth2PasswordBearer(tokenUrl="/user/login",scheme_name="User")
 
 
 def make_jwt_access_token(user_id:int,role:str)->str:
@@ -34,7 +34,7 @@ def make_jwt_refresh_token(user_id:int,role:str)->str:
     token=jwt.encode(payload,JWT_SECRET_KEY,algorithm=JWT_ALGO)
     return {"token":token,"id":token_id}
 
-async def get_token_payload(token:str=Depends(get_jwt_token),db:AsyncSession=Depends(get_db))->dict:
+async def get_token_payload(token:str=Depends(get_user_jwt_token),db:AsyncSession=Depends(get_db))->dict:
     try:
         payload=jwt.decode(token,JWT_SECRET_KEY,algorithms=[JWT_ALGO])
         user_id=int(payload.get("sub"))
@@ -50,7 +50,8 @@ async def get_token_payload(token:str=Depends(get_jwt_token),db:AsyncSession=Dep
     except JWTError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,detail="Invalid or Wrong Credential Try again later.")
     
-async def get_refresh_token(refresh_token:str=Cookie(),db:AsyncSession=Depends(get_db))->str:
+async def get_refresh_token(req:Request,db:AsyncSession=Depends(get_db))->str:
+    refresh_token=req.cookies.get("refresh_token")
     if not refresh_token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,detail="Wrong or invalid credential. ")
     try:

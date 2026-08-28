@@ -12,9 +12,9 @@ from redis_client import redis
 from services import auth , utils , email as my_email
 
 
-router=APIRouter(prefix="/user",tags=["User"])
+router=APIRouter(prefix="/user")
 
-@router.post("/register")
+@router.post("",tags=["User"])
 async def user__register(
     req:Request,
     full_name:str=Form(...),
@@ -24,6 +24,12 @@ async def user__register(
     db:AsyncSession=Depends(get_db)
 ):
     try:
+        existing= await db.scalar(select(User).where(User.email==email))
+        if existing:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT,detail="Email Already in use. ")
+        existing= await db.scalar(select(User).where(User.phone_number==phone_number))
+        if existing:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT,detail="Number Already in use. ")
         user=User(full_name=full_name,email=email,phone_number=phone_number,password=utils.pass_hasher.hash(password))
         db.add(user)
         await db.commit()
@@ -40,7 +46,50 @@ async def user__register(
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,detail="Database is Down Try again later.")
 
 
-@router.get('/auth/verify')
+
+@router.get("",tags=["User"])
+async def user__show(payload:dict=Depends(auth.get_token_payload),db:AsyncSession=Depends(get_db)):
+    user_id=int(payload.get("sub"))
+    db_user=await db.get(User,user_id)
+    if not db_user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="No user found")
+    return db_user
+@router.patch("",tags=["User"])
+async def user__update_info(
+    payload:dict=Depends(auth.get_token_payload),
+    db:AsyncSession=Depends(get_db),
+    new_full_name:str=Form(...)
+    ):
+    try:
+        db_user=await db.get(User,int(payload.get("sub")))
+        if not db_user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="User Not Found.") 
+        db_user.full_name=new_full_name
+        await db.commit()
+        return {
+            "message":"Your Name was updated."
+        }
+    except SQLAlchemyError:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,detail="Database server is down.")
+
+@router.delete("",tags=["User"])
+async def user__delete(res:Response,req:Request,db:AsyncSession=Depends(get_db),payload:dict=Depends(auth.get_token_payload)):
+    try:
+        user_id=int(payload.get("sub"))
+        db_user= await db.get(User,user_id)
+        if not db_user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="User Not Found.")
+        await db.delete(db_user)
+        res.delete_cookie("refresh_token")
+        await db.commit()
+        return{
+            "message":"Your Account hade been deleted"
+        }
+    except SQLAlchemyError:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,detail="Database server is down.")
+
+
+@router.get('/auth/verify-email',tags=["User Auth"])
 async def user__email_verify(token:str=Query(...),db:AsyncSession=Depends(get_db)):
     redis__user_id=redis.get(f"email_token_verify:{token}")
     if redis__user_id is None:
@@ -61,7 +110,7 @@ async def user__email_verify(token:str=Query(...),db:AsyncSession=Depends(get_db
     except SQLAlchemyError:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,detail="Database is not available. Try Again Later")
 
-@router.post("/login")
+@router.post("/login",tags=["User Auth"])
 async def user__login(res:Response,form_data:OAuth2PasswordRequestForm=Depends(),db:AsyncSession=Depends(get_db)):
     user= await db.scalar(select(User).where(User.full_name==form_data.username))
     if not user:
@@ -82,7 +131,7 @@ async def user__login(res:Response,form_data:OAuth2PasswordRequestForm=Depends()
         "access_token":access_token
     }
 
-@router.post("/auth/refresh")
+@router.post("/auth/refresh",tags=["User Auth"])
 async def user__refresh_token(user_id:str=Depends(auth.get_refresh_token)):
     access_token=auth.make_jwt_access_token(user_id,"user")
     return {
@@ -90,7 +139,7 @@ async def user__refresh_token(user_id:str=Depends(auth.get_refresh_token)):
         "access_token":access_token
     }
 
-@router.post("/auth/logout")
+@router.post("/auth/logout",tags=["User Auth"])
 async def user__logout(res:Response,req:Request,payload:dict=Depends(auth.get_token_payload)):
     redis_id=redis.get(f"blocked_token_id:{payload.get("token_id")}")
     cookie_token=req.cookies.get("refresh_token")
@@ -98,48 +147,15 @@ async def user__logout(res:Response,req:Request,payload:dict=Depends(auth.get_to
     if not redis_id and not cookie_token:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail="you are logout already.")
     res.delete_cookie("refresh_token")
+    redis.delete(f"refresh_token:{payload.get("token_id")}")
     redis.set(f"blocked_token_id:{payload.get("token_id")}",'1',ex=60*8)
     return{
         "message":"You have been logout."
     }
 
-@router.patch("/update/name")
-async def user__update_info(
-    payload:dict=Depends(auth.get_token_payload),
-    db:AsyncSession=Depends(get_db),
-    new_full_name:str=Form(...)
-    ):
-    try:
-        db_user=await db.get(User,int(payload.get("sub")))
-        if not db_user:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="User Not Found.") 
-        db_user.full_name=new_full_name
-        await db.commit()
-        return {
-            "message":"Your Name was updated."
-        }
-    except SQLAlchemyError:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,detail="Database server is down.")
 
-
-@router.delete("/delete")
-async def user__delete(res:Response,req:Request,db:AsyncSession=Depends(get_db),payload:dict=Depends(auth.get_token_payload)):
-    try:
-        user_id=int(payload.get("sub"))
-        db_user= await db.get(User,user_id)
-        if not db_user:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="User Not Found.")
-        await db.delete(db_user)
-        res.delete_cookie("refresh_token")
-        await db.commit()
-        return{
-            "message":"Your Account hade been deleted"
-        }
-    except SQLAlchemyError:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,detail="Database server is down.")
-
-@router.post("/reset/otp")
-async def user__password_reset_otp(
+@router.post("/password/change/request",tags=["User Password"])
+async def user__change_password_otp(
     req:Request,
     payload:dict=Depends(auth.get_token_payload),
     user_name:str=Form(...),
@@ -158,8 +174,8 @@ async def user__password_reset_otp(
         "message":"Email was sended."
     }
 
-@router.post("/reset/password")
-async def user__password_reset(payload:dict=Depends(auth.get_token_payload),db:AsyncSession=Depends(get_db),otp:str=Form(...),new_pass:str=Form(...)):
+@router.post("/password/change",tags=["User Password"])
+async def user__change_password(payload:dict=Depends(auth.get_token_payload),db:AsyncSession=Depends(get_db),otp:str=Form(...),new_pass:str=Form(...)):
     db_user= await db.get(User,int(payload.get("sub")))
     if not db_user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="No User Found.")
@@ -169,6 +185,48 @@ async def user__password_reset(payload:dict=Depends(auth.get_token_payload),db:A
     db_user.password=utils.pass_hasher.hash(new_pass)
     try:
         await db.commit()
+        redis.delete(f"password_reset_otp:{otp}")
+        return{
+            "message":"Your new password is set."
+        }
+    except SQLAlchemyError:
+        await db.rollback()
+        
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,detail="Database server is down.")
+
+
+
+@router.post("/password/forgot",tags=["User Password"])
+async def user__forgot_password_otp(
+    req:Request,
+    email:str=Form(...),
+    db:AsyncSession=Depends(get_db)
+    ):
+    db_user=await db.scalar(select(User).where(User.email==email))
+    if not db_user:
+        return {
+        "message": "If the email is registered, a password reset OTP has been sent."
+        }
+    otp=utils.generate_otp()
+    job = await req.app.state.arq.enqueue_job("send_password_otp",db_user.email,otp)
+    redis.set(f"password_reset_otp:{otp}",email,ex=60*10)
+    return{
+        "message":"Email was sended."
+    }
+
+@router.post("/password/reset",tags=["User Password"])
+async def user__reset_password(db:AsyncSession=Depends(get_db),otp:str=Form(...),new_pass:str=Form(...)):
+    redis_email=redis.get(f"password_reset_otp:{otp}")
+    if not redis_email:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,detail="Invalid Or expired OTP try again later.")
+    db_user= await db.scalar(select(User).where(User.email==redis_email))
+    if not db_user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="No User Found.")
+
+    db_user.password=utils.pass_hasher.hash(new_pass)
+    try:
+        await db.commit()
+        redis.delete(f"password_reset_otp:{otp}")
         return{
             "message":"Your new password is set."
         }

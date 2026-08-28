@@ -29,9 +29,9 @@ def generate_admin_refresh_token(sub):
     refresh_token=jwt.encode(payload,JWT_SECRET_KEY,algorithm=JWT_ALGO)
     return refresh_token
 
-get_jwt_token=OAuth2PasswordBearer(tokenUrl="/admin/login")
+get_admin_jwt_token=OAuth2PasswordBearer(tokenUrl="/admin/login",scheme_name="Admin")
 
-async def check_admin_access_token(token:str=Depends(get_jwt_token)):
+async def check_admin_access_token(token:str=Depends(get_admin_jwt_token)):
     try:
         payload=jwt.decode(token,JWT_SECRET_KEY,algorithms=[JWT_ALGO])
         role=payload.get("role")
