@@ -35,6 +35,7 @@ async def admin__login(
     refresh_token=admin_auth.generate_admin_refresh_token(admin.username)
     res.set_cookie(key="admin_refresh_token",value=refresh_token,samesite='strict',path="/admin",httponly=True, max_age=60*60*24*20)
     redis.set(f"admin_refresh_token:{refresh_token}",str(admin.username),ex=60*60*24*20)
+    admin_logger.info(f"Login at {datetime.now(timezone.utc)}")
     return {
         "token_type":"bearer",
         "access_token":access_token
@@ -42,6 +43,7 @@ async def admin__login(
 
 @router.post("/refresh",tags=["Admin"])
 async def admin__refresh_token(token:str=Depends(admin_auth.admin_check_refresh_token)):
+    admin_logger.info(f"New access Token created at {datetime.now(timezone.utc)}")
     return{
         "token_type":"bearer",
         "access_token":token
@@ -56,6 +58,11 @@ async def admin__logout(res:Response,req:Request,admin:dict=Depends(admin_auth.c
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail="Already Logout.")
     res.delete_cookie("admin_refresh_token")
     redis.delete(f"admin_refresh_token:{refresh_token}")
+    admin_logger.info(f"Logout at {datetime.now(timezone.utc)}")
+    return{
+        "message":"successful Logout."
+    }
+
 
 @router.get("/room",response_model=list[DisplayRoom],tags=["Admin Room"])
 async def admin__show_rooms(db:AsyncSession=Depends(get_db),admin:dict=Depends(admin_auth.check_admin_access_token)):
